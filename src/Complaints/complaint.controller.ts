@@ -9,6 +9,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { AdminClerkGuard } from '../Clerk/admin-clerk.guard';
 import { ClerkAuthGuard } from '../Clerk/clerk-auth.guard';
 import { CurrentClerkUserId } from '../Clerk/current-clerk-user-id.decorator';
 import { ComplaintsService } from './complaint.service';
@@ -20,7 +21,14 @@ import { UpdateComplaintDto } from './dto/update-complaint.dto';
 export class ComplaintsController {
   constructor(private readonly complaintsService: ComplaintsService) {}
 
+  @Get('admin/board')
+  @UseGuards(AdminClerkGuard)
+  getAdminBoard() {
+    return this.complaintsService.getAdminBoard();
+  }
+
   @Get('dispute-alerts')
+  @UseGuards(AdminClerkGuard)
   getDisputeAlerts() {
     return this.complaintsService.getDisputeAlerts();
   }
@@ -55,6 +63,7 @@ export class ComplaintsController {
   }
 
   @Patch(':id')
+  @UseGuards(AdminClerkGuard)
   updateComplaint(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateComplaintDto,
@@ -63,6 +72,7 @@ export class ComplaintsController {
   }
 
   @Delete(':id')
+  @UseGuards(AdminClerkGuard)
   deleteComplaint(@Param('id', ParseIntPipe) id: number) {
     return this.complaintsService.remove(id);
   }

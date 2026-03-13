@@ -68,6 +68,43 @@ export class ComplaintsService {
     });
   }
 
+  async getAdminBoard() {
+    const [complaints, users, disputeAlerts] = await Promise.all([
+      this.prisma.complaints.findMany({
+        include: { user: true },
+      }),
+      this.prisma.users.findMany({
+        select: {
+          id: true,
+          clerkId: true,
+          email: true,
+          name: true,
+          _count: {
+            select: {
+              complaints: true,
+            },
+          },
+        },
+        orderBy: { id: 'asc' },
+      }),
+      this.getDisputeAlerts(),
+    ]);
+
+    const rankedComplaints = this.rankComplaints(complaints);
+
+    return {
+      users: users.map((user) => ({
+        id: user.id,
+        clerkId: user.clerkId,
+        email: user.email,
+        name: user.name,
+        complaintCount: user._count.complaints,
+      })),
+      disputeAlerts,
+      complaints: rankedComplaints,
+    };
+  }
+
   getDisputeAlerts() {
     return this.prisma.disputeAlerts.findMany({
       orderBy: { createdAt: 'desc' },
@@ -454,5 +491,112 @@ export class ComplaintsService {
         error instanceof Error ? error.message : 'Unknown webhook error';
       this.logger.error(`Failed to trigger complaint status webhook: ${message}`);
     }
+  }
+
+  private rankComplaints(
+    complaints: Awaited<ReturnType<PrismaService['complaints']['findMany']>>,
+  ) {
+    const clusters = new Map<
+      string,
+      Awaited<ReturnType<PrismaService['complaints']['findMany']>>
+    >();
+
+    for (const complaint of complaints) {
+      const key = this.buildComplaintClusterKey(complaint);
+      const existing = clusters.get(key) || [];
+      existing.push(complaint);
+      clusters.set(key, existing);
+    }
+
+    return complaints
+      .map((complaint) => {
+        const clusterKey = this.buildComplaintClusterKey(complaint);
+        const similarComplaints = clusters.get(clusterKey) || [];
+        const duplicateCount = similarComplaints.length;
+        const isResolved = complaint.status === 'RESOLVED';
+        const isRejected = complaint.status === 'REJECTED';
+        const isActive =
+          complaint.status === 'PENDING' || complaint.status === 'IN_PROGRESS';
+        const ageInHours = Math.max(
+          1,
+          Math.floor(
+            (Date.now() - new Date(complaint.createdAt).getTime()) / 36e5,
+          ),
+        );
+
+        const duplicateBoost = Math.min(duplicateCount * 12, 120);
+        const ageBoost = Math.min(ageInHours, 72);
+        const statusBoost = isResolved ? 0 : isRejected ? 8 : 28;
+        const geoBoost =
+          complaint.latitude != null && complaint.longitude != null ? 6 : 0;
+        const priorityScore =
+          duplicateBoost + ageBoost + statusBoost + geoBoost;
+
+        const priorityLabel =
+          priorityScore >= 120
+            ? 'Critical'
+            : priorityScore >= 70
+              ? 'High'
+              : priorityScore >= 35
+                ? 'Medium'
+                : 'Low';
+
+        const priorityReasons = [
+          duplicateCount > 1
+            ? `${duplicateCount} similar complaints reported`
+            : 'Single report',
+          isActive
+            ? 'Still active in the civic queue'
+            : isResolved
+              ? 'Already resolved'
+              : 'Marked rejected and may need review',
+          ageInHours >= 24
+            ? `Open for ${Math.floor(ageInHours / 24)} day(s)`
+            : `Open for ${ageInHours} hour(s)`,
+        ];
+
+        return {
+          ...complaint,
+          priorityScore,
+          priorityLabel,
+          duplicateCount,
+          priorityReasons,
+          clusterKey,
+        };
+      })
+      .sort((a, b) => {
+        if (b.priorityScore !== a.priorityScore) {
+          return b.priorityScore - a.priorityScore;
+        }
+
+        return (
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+      });
+  }
+
+  private buildComplaintClusterKey(
+    complaint: Awaited<ReturnType<PrismaService['complaints']['findMany']>>[number],
+  ) {
+    const normalizedTitle = complaint.title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 6)
+      .join(' ');
+    const normalizedDescription = complaint.description
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 6)
+      .join(' ');
+    const geoKey =
+      complaint.latitude != null && complaint.longitude != null
+        ? `${complaint.latitude.toFixed(3)}:${complaint.longitude.toFixed(3)}`
+        : 'no-geo';
+
+    return `${normalizedTitle}|${normalizedDescription}|${geoKey}`;
   }
 }
