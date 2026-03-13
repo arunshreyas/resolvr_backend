@@ -1,13 +1,16 @@
 import {
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
 import { UsersService } from '../Users/users.service';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
+import { DisputeChatDto } from './dto/dispute-chat.dto';
 import { UpdateComplaintDto } from './dto/update-complaint.dto';
 
 @Injectable()
@@ -37,10 +40,42 @@ export class ComplaintsService {
     return this.ensureComplaintExists(id);
   }
 
+  async findOneForClerkUser(id: number, clerkUserId: string) {
+    const [complaint, user] = await Promise.all([
+      this.ensureComplaintExists(id),
+      this.usersService.findByClerkId(clerkUserId),
+    ]);
+
+    if (!user) {
+      throw new UnauthorizedException(
+        'No local user record found for this Clerk user. Configure Clerk webhooks first.',
+      );
+    }
+
+    if (complaint.userId !== user.id) {
+      throw new UnauthorizedException(
+        'You do not have access to dispute this complaint.',
+      );
+    }
+
+    return complaint;
+  }
+
   findAll() {
     return this.prisma.complaints.findMany({
       orderBy: { id: 'asc' },
       include: { user: true },
+    });
+  }
+
+  getDisputeAlerts() {
+    return this.prisma.disputeAlerts.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        complaint: true,
+        user: true,
+      },
+      take: 20,
     });
   }
 
@@ -108,17 +143,234 @@ export class ComplaintsService {
     return complaint;
   }
 
+  async disputeComplaint(
+    id: number,
+    clerkUserId: string,
+    data: DisputeChatDto,
+  ) {
+    const complaint = await this.findOneForClerkUser(id, clerkUserId);
+
+    const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
+
+    if (!apiKey) {
+      throw new ServiceUnavailableException(
+        'OPENROUTER_API_KEY is not configured.',
+      );
+    }
+
+    const model =
+      this.configService.get<string>('OPENROUTER_MODEL') || 'openrouter/free';
+    const siteUrl =
+      this.configService.get<string>('OPENROUTER_SITE_URL') ||
+      'http://localhost:3001';
+    const appTitle =
+      this.configService.get<string>('OPENROUTER_APP_NAME') || 'Resolvr';
+
+    const response = await fetch(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': siteUrl,
+          'X-OpenRouter-Title': appTitle,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.4,
+          max_tokens: 500,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content: [
+                'You are Resolvr Dispute Assistant.',
+                'Help a citizen challenge or clarify the current status of a civic complaint.',
+                'Use only the complaint context provided.',
+                'Do not invent policies, laws, or evidence.',
+                'Ask for concrete facts, timelines, photos, or on-ground evidence if needed.',
+                'Be concise, practical, and respectful.',
+                'When helpful, draft a short dispute message the user can send to the city team.',
+                'Return strict JSON only with keys: reply, urgent, urgentReason.',
+                'Set urgent to true only when there is a strong reason the admin team should review the dispute quickly.',
+              ].join(' '),
+            },
+            {
+              role: 'system',
+              content: JSON.stringify({
+                complaint: {
+                  id: complaint.id,
+                  title: complaint.title,
+                  description: complaint.description,
+                  status: complaint.status,
+                  createdAt: complaint.createdAt,
+                  updatedAt: complaint.updatedAt,
+                  latitude: complaint.latitude,
+                  longitude: complaint.longitude,
+                },
+                user: {
+                  name: complaint.user?.name,
+                  email: complaint.user?.email ?? complaint.userEmail,
+                },
+              }),
+            },
+            ...data.messages,
+          ],
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      this.logger.error(
+        `OpenRouter dispute chat failed with ${response.status}: ${errorText}`,
+      );
+      throw new InternalServerErrorException(
+        'The dispute assistant could not respond right now.',
+      );
+    }
+
+    const payload = (await response.json()) as {
+      choices?: Array<{
+        message?: {
+          content?: string;
+        };
+      }>;
+      model?: string;
+    };
+
+    const content = payload.choices?.[0]?.message?.content?.trim();
+
+    if (!content) {
+      throw new InternalServerErrorException(
+        'The dispute assistant returned an empty response.',
+      );
+    }
+
+    const parsed = this.parseDisputeResponse(content);
+    const message = this.cleanAssistantReply(parsed.reply);
+    const messageHtml = this.markdownToHtml(message);
+
+    if (parsed.urgent) {
+      await this.prisma.disputeAlerts.create({
+        data: {
+          complaintId: complaint.id,
+          userId: complaint.userId,
+          userEmail: complaint.user?.email ?? complaint.userEmail ?? 'Unknown',
+          userMessage: data.messages[data.messages.length - 1]?.content ?? '',
+          assistantResponse: message,
+          urgentReason: parsed.urgentReason || null,
+        },
+      });
+    }
+
+    return {
+      complaintId: complaint.id,
+      status: complaint.status,
+      model: payload.model || model,
+      message,
+      messageHtml,
+      urgent: parsed.urgent,
+      urgentReason: parsed.urgentReason || null,
+      userEmail: complaint.user?.email ?? complaint.userEmail,
+    };
+  }
+
+  private parseDisputeResponse(content: string) {
+    const normalized = content
+      .trim()
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
+
+    try {
+      const parsed = JSON.parse(normalized) as {
+        reply?: string;
+        urgent?: boolean;
+        urgentReason?: string;
+      };
+
+      return {
+        reply: parsed.reply?.trim() || normalized,
+        urgent: Boolean(parsed.urgent),
+        urgentReason: parsed.urgentReason?.trim() || '',
+      };
+    } catch {
+      return {
+        reply: normalized,
+        urgent: false,
+        urgentReason: '',
+      };
+    }
+  }
+
+  private cleanAssistantReply(message: string) {
+    return message
+      .replace(/^#+\s*/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  private markdownToHtml(markdown: string) {
+    const escaped = this.escapeHtml(markdown);
+    const blocks = escaped.split(/\n{2,}/).filter(Boolean);
+
+    return blocks
+      .map((block) => {
+        const lines = block.split('\n').map((line) => line.trim());
+
+        if (lines.every((line) => /^[-*]\s+/.test(line))) {
+          const items = lines
+            .map((line) => line.replace(/^[-*]\s+/, ''))
+            .map((line) => `<li>${this.inlineMarkdownToHtml(line)}</li>`)
+            .join('');
+          return `<ul>${items}</ul>`;
+        }
+
+        if (lines.every((line) => /^\d+\.\s+/.test(line))) {
+          const items = lines
+            .map((line) => line.replace(/^\d+\.\s+/, ''))
+            .map((line) => `<li>${this.inlineMarkdownToHtml(line)}</li>`)
+            .join('');
+          return `<ol>${items}</ol>`;
+        }
+
+        return `<p>${this.inlineMarkdownToHtml(lines.join('<br />'))}</p>`;
+      })
+      .join('');
+  }
+
+  private inlineMarkdownToHtml(value: string) {
+    return value
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/__(.+?)__/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*(.+?)\*/g, '$1<em>$2</em>')
+      .replace(/(^|[^_])_(.+?)_/g, '$1<em>$2</em>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+
+  private escapeHtml(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   private async triggerN8nWebhook(
     complaint: Awaited<ReturnType<PrismaService['complaints']['create']>>,
     user: Awaited<ReturnType<UsersService['findByClerkId']>>,
   ) {
-    const webhookUrl = this.configService.get<string>(
-      'N8N_COMPLAINT_WEBHOOK_URL',
-    );
+    const webhookUrl =
+      this.configService.get<string>('N8N_COMPLAINT_CREATED_WEBHOOK_URL') ||
+      this.configService.get<string>('N8N_COMPLAINT_WEBHOOK_URL');
 
     if (!webhookUrl) {
       this.logger.warn(
-        'N8N_COMPLAINT_WEBHOOK_URL is not set. Skipping n8n complaint webhook.',
+        'N8N_COMPLAINT_CREATED_WEBHOOK_URL is not set. Skipping complaint created webhook.',
       );
       return;
     }
@@ -158,13 +410,13 @@ export class ComplaintsService {
     previousStatus: string,
     newStatus: string,
   ) {
-    const webhookUrl = this.configService.get<string>(
-      'N8N_COMPLAINT_WEBHOOK_URL',
-    );
+    const webhookUrl =
+      this.configService.get<string>('N8N_COMPLAINT_STATUS_WEBHOOK_URL') ||
+      this.configService.get<string>('N8N_COMPLAINT_WEBHOOK_URL');
 
     if (!webhookUrl) {
       this.logger.warn(
-        'N8N_COMPLAINT_WEBHOOK_URL is not set. Skipping complaint status webhook.',
+        'N8N_COMPLAINT_STATUS_WEBHOOK_URL is not set. Skipping complaint status webhook.',
       );
       return;
     }

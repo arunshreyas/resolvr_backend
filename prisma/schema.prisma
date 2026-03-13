@@ -12,6 +12,7 @@ model Users {
   email      String       @unique
   name       String?
   complaints Complaints[]
+  disputeAlerts DisputeAlerts[]
 }
 
 model Complaints {
@@ -26,6 +27,22 @@ model Complaints {
   status      StatusEnum @default(PENDING)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+  disputeAlerts DisputeAlerts[]
+}
+
+model DisputeAlerts {
+  id                Int               @id @default(autoincrement())
+  complaintId       Int
+  complaint         Complaints        @relation(fields: [complaintId], references: [id])
+  userId            Int
+  user              Users             @relation(fields: [userId], references: [id])
+  userEmail         String
+  userMessage       String
+  assistantResponse String
+  urgentReason      String?
+  status            DisputeAlertStatus @default(OPEN)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 }
 
 enum StatusEnum {
@@ -33,4 +50,10 @@ enum StatusEnum {
   IN_PROGRESS
   RESOLVED
   REJECTED
+}
+
+enum DisputeAlertStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
 }
