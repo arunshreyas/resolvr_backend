@@ -45,15 +45,29 @@ export class ComplaintsService {
   }
 
   async update(id: number, data: UpdateComplaintDto) {
-    await this.ensureComplaintExists(id);
+    const existingComplaint = await this.ensureComplaintExists(id);
 
     const complaintData = { ...data };
     delete complaintData.userEmail;
 
-    return this.prisma.complaints.update({
+    const updatedComplaint = await this.prisma.complaints.update({
       where: { id },
       data: complaintData,
+      include: { user: true },
     });
+
+    if (
+      typeof data.status !== 'undefined' &&
+      data.status !== existingComplaint.status
+    ) {
+      await this.triggerComplaintStatusWebhook(
+        updatedComplaint,
+        existingComplaint.status,
+        data.status,
+      );
+    }
+
+    return updatedComplaint;
   }
 
   async remove(id: number) {
@@ -136,6 +150,57 @@ export class ComplaintsService {
       const message =
         error instanceof Error ? error.message : 'Unknown webhook error';
       this.logger.error(`Failed to trigger n8n webhook: ${message}`);
+    }
+  }
+
+  private async triggerComplaintStatusWebhook(
+    complaint: Awaited<ReturnType<ComplaintsService['ensureComplaintExists']>>,
+    previousStatus: string,
+    newStatus: string,
+  ) {
+    const webhookUrl = this.configService.get<string>(
+      'N8N_COMPLAINT_WEBHOOK_URL',
+    );
+
+    if (!webhookUrl) {
+      this.logger.warn(
+        'N8N_COMPLAINT_WEBHOOK_URL is not set. Skipping complaint status webhook.',
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          event: 'complaint.status_changed',
+          complaint,
+          previousStatus,
+          newStatus,
+          userEmail: complaint.user?.email ?? null,
+          user: complaint.user
+            ? {
+                id: complaint.user.id,
+                clerkId: complaint.user.clerkId,
+                name: complaint.user.name,
+                email: complaint.user.email,
+              }
+            : null,
+        }),
+      });
+
+      if (!response.ok) {
+        this.logger.warn(
+          `Complaint status webhook returned ${response.status} ${response.statusText}.`,
+        );
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown webhook error';
+      this.logger.error(`Failed to trigger complaint status webhook: ${message}`);
     }
   }
 }
