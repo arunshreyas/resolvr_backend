@@ -64,7 +64,6 @@ export class ComplaintsService {
   }
 
   async create(data: CreateComplaintDto, clerkUserId: string) {
-    const userEmail = data.userEmail;
     const complaintData = {
       title: data.title,
       description: data.description,
@@ -85,19 +84,19 @@ export class ComplaintsService {
       data: {
         ...complaintData,
         userId: user.id,
-        userEmail: userEmail ?? user.email,
+        userEmail: user.email,
       },
       include: { user: true },
     });
 
-    await this.triggerN8nWebhook(complaint, userEmail ?? user.email);
+    await this.triggerN8nWebhook(complaint, user);
 
     return complaint;
   }
 
   private async triggerN8nWebhook(
     complaint: Awaited<ReturnType<PrismaService['complaints']['create']>>,
-    userEmail?: string,
+    user: Awaited<ReturnType<UsersService['findByClerkId']>>,
   ) {
     const webhookUrl = this.configService.get<string>(
       'N8N_COMPLAINT_WEBHOOK_URL',
@@ -119,7 +118,12 @@ export class ComplaintsService {
         body: JSON.stringify({
           event: 'complaint.created',
           complaint,
-          userEmail,
+          user: {
+            id: user?.id,
+            clerkId: user?.clerkId,
+            name: user?.name,
+            email: user?.email,
+          },
         }),
       });
 

@@ -77,15 +77,18 @@ export class ClerkWebhooksController {
       );
     }
 
-    const name = [event.data.first_name, event.data.last_name]
+    const fullName = [event.data.first_name, event.data.last_name]
       .filter(Boolean)
       .join(' ')
       .trim();
+    const emailPrefix = primaryEmail.split('@')[0];
+    const name =
+      fullName || event.data.first_name || event.data.username || emailPrefix;
 
     await this.usersService.upsertFromClerk({
       clerkId: event.data.id,
       email: primaryEmail,
-      name: name || undefined,
+      name,
     });
   }
 }
