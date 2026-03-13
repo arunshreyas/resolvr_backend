@@ -1,0 +1,32 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Users {
+  id         Int          @id @default(autoincrement())
+  email      String       @unique
+  name       String?
+  complaints Complaints[]
+}
+
+model Complaints {
+  id          Int        @id @default(autoincrement())
+  title       String
+  description String
+  userId      Int
+  user        Users      @relation(fields: [userId], references: [id])
+  status      StatusEnum @default(PENDING)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+enum StatusEnum {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+  REJECTED
+}
