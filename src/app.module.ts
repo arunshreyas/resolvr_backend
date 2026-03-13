@@ -4,6 +4,10 @@ import { ComplaintsModule } from './Complaints/complaint.module';
 import { UsersModule } from './Users/users.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), UsersModule, ComplaintsModule],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    UsersModule,
+    ComplaintsModule,
+  ],
 })
 export class AppModule {}
