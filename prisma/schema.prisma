@@ -8,6 +8,7 @@ datasource db {
 
 model Users {
   id         Int          @id @default(autoincrement())
+  clerkId    String?      @unique
   email      String       @unique
   name       String?
   complaints Complaints[]

@@ -7,7 +7,10 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  UseGuards,
 } from '@nestjs/common';
+import { ClerkAuthGuard } from '../Clerk/clerk-auth.guard';
+import { CurrentClerkUserId } from '../Clerk/current-clerk-user-id.decorator';
 import { ComplaintsService } from './complaint.service';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { UpdateComplaintDto } from './dto/update-complaint.dto';
@@ -27,8 +30,12 @@ export class ComplaintsController {
   }
 
   @Post()
-  createComplaint(@Body() body: CreateComplaintDto) {
-    return this.complaintsService.create(body);
+  @UseGuards(ClerkAuthGuard)
+  createComplaint(
+    @CurrentClerkUserId() clerkUserId: string,
+    @Body() body: CreateComplaintDto,
+  ) {
+    return this.complaintsService.create(body, clerkUserId);
   }
 
   @Patch(':id')

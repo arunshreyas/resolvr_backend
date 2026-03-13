@@ -1,5 +1,12 @@
 import { StatusEnum } from '@prisma/client/index';
-import { IsEnum, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class CreateComplaintDto {
   @IsString()
@@ -8,9 +15,10 @@ export class CreateComplaintDto {
   @IsString()
   description: string;
 
+  @IsOptional()
   @IsInt()
   @Min(1)
-  userId: number;
+  userId?: number;
 
   @IsOptional()
   @IsEnum(StatusEnum)

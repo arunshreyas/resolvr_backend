@@ -1,5 +1,12 @@
 import { StatusEnum } from '@prisma/client/index';
-import { IsEnum, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class UpdateComplaintDto {
   @IsOptional()

@@ -1,6 +1,12 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
+import { UsersService } from '../Users/users.service';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { UpdateComplaintDto } from './dto/update-complaint.dto';
 
@@ -11,6 +17,7 @@ export class ComplaintsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly usersService: UsersService,
   ) {}
 
   private async ensureComplaintExists(id: number) {
@@ -56,17 +63,34 @@ export class ComplaintsService {
     });
   }
 
-  async create(data: CreateComplaintDto) {
-    const complaintData = { ...data };
-    const userEmail = complaintData.userEmail;
-    delete complaintData.userEmail;
+  async create(data: CreateComplaintDto, clerkUserId: string) {
+    const userEmail = data.userEmail;
+    const complaintData = {
+      title: data.title,
+      description: data.description,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      status: data.status,
+    };
+
+    const user = await this.usersService.findByClerkId(clerkUserId);
+
+    if (!user) {
+      throw new UnauthorizedException(
+        'No local user record found for this Clerk user. Configure Clerk webhooks first.',
+      );
+    }
 
     const complaint = await this.prisma.complaints.create({
-      data: complaintData,
+      data: {
+        ...complaintData,
+        userId: user.id,
+        userEmail: userEmail ?? user.email,
+      },
       include: { user: true },
     });
 
-    await this.triggerN8nWebhook(complaint, userEmail);
+    await this.triggerN8nWebhook(complaint, userEmail ?? user.email);
 
     return complaint;
   }
