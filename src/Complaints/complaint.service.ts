@@ -158,6 +158,8 @@ export class ComplaintsService {
   }
 
   async create(data: CreateComplaintDto, clerkUserId: string) {
+    this.logger.log(`Creating complaint for user: ${clerkUserId}`);
+    
     const complaintData = {
       title: data.title,
       description: data.description,
@@ -167,6 +169,7 @@ export class ComplaintsService {
     };
 
     const user = await this.usersService.findByClerkId(clerkUserId);
+    this.logger.log(`Found user: ${user ? user.email : 'NOT FOUND'}`);
 
     if (!user) {
       throw new UnauthorizedException(
@@ -183,7 +186,9 @@ export class ComplaintsService {
       include: { user: true },
     });
 
+    this.logger.log(`Complaint created with ID: ${complaint.id}, triggering webhook...`);
     await this.triggerN8nWebhook(complaint, user);
+    this.logger.log(`Webhook trigger completed`);
 
     return complaint;
   }
@@ -409,9 +414,13 @@ export class ComplaintsService {
     complaint: Awaited<ReturnType<PrismaService['complaints']['create']>>,
     user: Awaited<ReturnType<UsersService['findByClerkId']>>,
   ) {
+    this.logger.log('Starting webhook trigger...');
+    
     const webhookUrl =
       this.configService.get<string>('N8N_COMPLAINT_CREATED_WEBHOOK_URL') ||
       this.configService.get<string>('N8N_COMPLAINT_WEBHOOK_URL');
+
+    this.logger.log(`Webhook URL: ${webhookUrl || 'NOT SET'}`);
 
     if (!webhookUrl) {
       this.logger.warn(
@@ -421,6 +430,7 @@ export class ComplaintsService {
     }
 
     try {
+      this.logger.log('Sending webhook request...');
       const response = await fetch(webhookUrl, {
         method: 'POST',
         headers: {
@@ -437,6 +447,8 @@ export class ComplaintsService {
           },
         }),
       });
+
+      this.logger.log(`Webhook response status: ${response.status} ${response.statusText}`);
 
       if (!response.ok) {
         this.logger.warn(
