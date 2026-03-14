@@ -8,8 +8,12 @@ async function bootstrap() {
     rawBody: true,
   });
   app.use('/webhooks/clerk', express.raw({ type: 'application/json' }));
+  app.use((req, res, next) => {
+    console.log(`Incoming ${req.method} request to ${req.url} from ${req.headers.origin || 'unknown origin'}`);
+    next();
+  });
   app.enableCors({
-    origin: 'http://localhost:3001',
+    origin: ['https://resolvr-client.vercel.app', 'http://localhost:3001'],
     credentials: true,
   });
   app.useGlobalPipes(
@@ -20,5 +24,7 @@ async function bootstrap() {
     }),
   );
   await app.listen(process.env.PORT ?? 3000);
+  console.log(`Backend is running on port ${process.env.PORT ?? 3000}`);
+  console.log(`CORS allowed for specific origins: https://resolvr-client.vercel.app, http://localhost:3001`);
 }
 void bootstrap();

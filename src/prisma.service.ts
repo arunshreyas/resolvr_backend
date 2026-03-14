@@ -11,7 +11,14 @@ export class PrismaService
   }
 
   async onModuleInit() {
-    await this.$connect();
+    console.log('Attempting to connect to the database...');
+    try {
+      await this.$connect();
+      console.log('Database connection successful!');
+    } catch (error) {
+      console.error('Database connection failed:', error);
+      throw error;
+    }
   }
 
   async onModuleDestroy() {
