@@ -12,6 +12,7 @@ import {
 import { AdminClerkGuard } from '../Clerk/admin-clerk.guard';
 import { ClerkAuthGuard } from '../Clerk/clerk-auth.guard';
 import { CurrentClerkUserId } from '../Clerk/current-clerk-user-id.decorator';
+import { WebhookAuthGuard } from '../Auth/webhook-auth.guard';
 import { ComplaintsService } from './complaint.service';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { DisputeChatDto } from './dto/dispute-chat.dto';
@@ -74,6 +75,12 @@ export class ComplaintsController {
   @Delete(':id')
   @UseGuards(AdminClerkGuard)
   deleteComplaint(@Param('id', ParseIntPipe) id: number) {
+    return this.complaintsService.remove(id);
+  }
+
+  @Delete('webhook/:id')
+  @UseGuards(WebhookAuthGuard)
+  deleteComplaintViaWebhook(@Param('id', ParseIntPipe) id: number) {
     return this.complaintsService.remove(id);
   }
 }

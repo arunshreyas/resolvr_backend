@@ -7,7 +7,10 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  UseGuards,
 } from '@nestjs/common';
+import { ClerkAuthGuard } from '../Clerk/clerk-auth.guard';
+import { CurrentClerkUserId } from '../Clerk/current-clerk-user-id.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
@@ -19,6 +22,12 @@ export class UsersController {
   @Get()
   getUsers() {
     return this.usersService.findAll();
+  }
+
+  @Get('me')
+  @UseGuards(ClerkAuthGuard)
+  getActiveUser(@CurrentClerkUserId() clerkUserId: string) {
+    return this.usersService.findByClerkId(clerkUserId);
   }
 
   @Get(':id')

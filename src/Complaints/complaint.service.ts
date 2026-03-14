@@ -137,6 +137,14 @@ export class ComplaintsService {
         existingComplaint.status,
         data.status,
       );
+
+      // Award points if the complaint was just marked as RESOLVED
+      if (data.status === 'RESOLVED') {
+        await this.prisma.users.update({
+          where: { id: existingComplaint.userId },
+          data: { rewardPoints: { increment: 50 } },
+        });
+      }
     }
 
     return updatedComplaint;

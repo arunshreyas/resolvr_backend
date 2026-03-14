@@ -9,9 +9,10 @@ datasource db {
 model Users {
   id         Int          @id @default(autoincrement())
   clerkId    String?      @unique
-  email      String       @unique
-  name       String?
-  complaints Complaints[]
+  email         String          @unique
+  name          String?
+  rewardPoints  Int             @default(0)
+  complaints    Complaints[]
   disputeAlerts DisputeAlerts[]
 }
 
@@ -24,6 +25,7 @@ model Complaints {
   latitude    Float?
   longitude   Float?
   userEmail   String?
+  resolutionNote String?
   status      StatusEnum @default(PENDING)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt

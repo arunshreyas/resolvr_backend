@@ -37,4 +37,8 @@ export class UpdateComplaintDto {
   @IsOptional()
   @IsString()
   userEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  resolutionNote?: string;
 }
